@@ -642,6 +642,7 @@ static const char * device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_BUS_PAX] = "bus-speaker",
     [SND_DEVICE_OUT_BUS_RSE] = "bus-speaker",
     [SND_DEVICE_OUT_CALL_PROXY] = "call-proxy",
+    [SND_DEVICE_OUT_ULTRASOUND] = "ultrasound-output",
 
     /* Capture sound devices */
     [SND_DEVICE_IN_HANDSET_MIC] = "handset-mic",
@@ -791,7 +792,7 @@ static const char * device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_IN_HANDSET_6MIC_AND_EC_REF_LOOPBACK] = "handset-6mic-and-ec-ref-loopback",
     [SND_DEVICE_IN_HANDSET_8MIC_AND_EC_REF_LOOPBACK] = "handset-8mic-and-ec-ref-loopback",
     [SND_DEVICE_IN_CALL_PROXY] = "call-proxy-in",
-    [SND_DEVICE_IN_ULTRASOUND_MIC] = "ultrasound-mic",
+    [SND_DEVICE_IN_ULTRASOUND] = "ultrasound-input",
 };
 
 // Platform specific backend bit width table
@@ -947,6 +948,7 @@ static int acdb_device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_BUS_PAX] = 60,
     [SND_DEVICE_OUT_BUS_RSE] = 60,
     [SND_DEVICE_OUT_CALL_PROXY] = 32,
+    [SND_DEVICE_OUT_ULTRASOUND] = 7,
     [SND_DEVICE_IN_HANDSET_MIC] = 4,
     [SND_DEVICE_IN_HANDSET_MIC_SB] = 163,
     [SND_DEVICE_IN_HANDSET_MIC_NN] = 183,
@@ -1086,7 +1088,7 @@ static int acdb_device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_IN_VOICE_HEARING_AID] = 44,
     [SND_DEVICE_IN_BUS] = 11,
     [SND_DEVICE_IN_CALL_PROXY] = 33,
-    [SND_DEVICE_IN_ULTRASOUND_MIC] = 4,
+    [SND_DEVICE_IN_ULTRASOUND] = 4,
 };
 
 struct name_to_index {
@@ -1209,6 +1211,7 @@ static struct name_to_index snd_device_name_index[SND_DEVICE_MAX] = {
     {TO_NAME_INDEX(SND_DEVICE_OUT_BUS_PAX)},
     {TO_NAME_INDEX(SND_DEVICE_OUT_BUS_RSE)},
     {TO_NAME_INDEX(SND_DEVICE_OUT_CALL_PROXY)},
+    {TO_NAME_INDEX(SND_DEVICE_OUT_ULTRASOUND)},
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_MIC)},
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_MIC_SB)},
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_MIC_NN)},
@@ -1355,6 +1358,7 @@ static struct name_to_index snd_device_name_index[SND_DEVICE_MAX] = {
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_6MIC_AND_EC_REF_LOOPBACK)},
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_8MIC_AND_EC_REF_LOOPBACK)},
     {TO_NAME_INDEX(SND_DEVICE_IN_CALL_PROXY)},
+    {TO_NAME_INDEX(SND_DEVICE_IN_ULTRASOUND)},
 };
 
 static char * backend_tag_table[SND_DEVICE_MAX] = {0};
@@ -2468,6 +2472,7 @@ static void set_platform_defaults(struct platform_data * my_data)
     hw_interface_table[SND_DEVICE_OUT_BUS_PAX] = strdup("QUAT_TDM_RX_0");
     hw_interface_table[SND_DEVICE_OUT_BUS_RSE] = strdup("QUIN_TDM_RX_0");
     hw_interface_table[SND_DEVICE_OUT_CALL_PROXY] = strdup("CALL_PROXY_RX");
+    hw_interface_table[SND_DEVICE_OUT_ULTRASOUND] = strdup("TERT_TDM_RX_1");
     hw_interface_table[SND_DEVICE_IN_HANDSET_MIC] = strdup("SLIMBUS_0_TX");
     hw_interface_table[SND_DEVICE_IN_HANDSET_MIC_SB] = strdup("SLIMBUS_0_TX");
     hw_interface_table[SND_DEVICE_IN_HANDSET_MIC_NN] = strdup("SLIMBUS_0_TX");
@@ -2606,7 +2611,7 @@ static void set_platform_defaults(struct platform_data * my_data)
     hw_interface_table[SND_DEVICE_IN_VOICE_HEARING_AID] = strdup("SLIMBUS_0_TX");
     hw_interface_table[SND_DEVICE_IN_BUS] = strdup("TERT_TDM_TX_0");
     hw_interface_table[SND_DEVICE_IN_CALL_PROXY] = strdup("CALL_PROXY_TX");
-    hw_interface_table[SND_DEVICE_IN_ULTRASOUND_MIC] = strdup("SLIMBUS_0_TX");
+    hw_interface_table[SND_DEVICE_IN_ULTRASOUND] = strdup("TX_CDC_DMA_TX_4");
     my_data->max_mic_count = PLATFORM_DEFAULT_MIC_COUNT;
 
      /*remove ALAC & APE from DSP decoder list based on software decoder availability*/
