@@ -55,6 +55,7 @@ struct ultrasound_device {
     int state;
     bool suspended;
     bool headset_connected;
+    struct stream_out rx_out;
     struct audio_device *adev;
 };
 
@@ -202,6 +203,18 @@ void us_init(struct audio_device *adev)
 
     us->adev = adev;
 
+    pthread_mutex_init(&us->rx_out.lock, (const pthread_mutexattr_t *) NULL);
+    pthread_mutex_init(&us->rx_out.pre_lock, (const pthread_mutexattr_t *) NULL);
+    list_init(&us->rx_out.device_list);
+    update_device_list(&us->rx_out.device_list, AUDIO_DEVICE_OUT_EARPIECE, "", true);
+    us->rx_out.dev = adev;
+    us->rx_out.sample_rate = pcm_config_us.rate;
+    us->rx_out.channel_mask = audio_channel_out_mask_from_count(pcm_config_us.channels);
+    us->rx_out.format = AUDIO_FORMAT_PCM_16_BIT;
+    us->rx_out.bit_width = 24;
+    us->rx_out.app_type_cfg.sample_rate = pcm_config_us.rate;
+    us->rx_out.app_type_cfg.bit_width = 16;
+
     us_cal_load();
 
 exit:
@@ -214,6 +227,9 @@ void us_deinit(void)
 
     if (us) {
         us_stop();
+        clear_devices(&us->rx_out.device_list);
+        pthread_mutex_destroy(&us->rx_out.lock);
+        pthread_mutex_destroy(&us->rx_out.pre_lock);
         free(us);
         us = NULL;
     }
@@ -342,6 +358,34 @@ void us_set_device_connection(audio_devices_t device, bool connected)
         us_select_rx_device();
 }
 
+bool us_check_and_set_codec_backend_cfg(struct audio_usecase *usecase,
+                                        snd_device_t snd_device,
+                                        unsigned int *sample_rate,
+                                        unsigned int *bit_width)
+{
+    struct audio_usecase *rx_usecase;
+    bool match = false;
+
+    if (!us || !usecase || snd_device == SND_DEVICE_OUT_SPEAKER)
+        return false;
+
+    if (usecase->id == USECASE_AUDIO_ULTRASOUND_RX) {
+        match = true;
+    } else if (us->state == ULTRASOUND_STATUS_STARTED) {
+        rx_usecase = get_usecase_from_list(us->adev, USECASE_AUDIO_ULTRASOUND_RX);
+        match = rx_usecase &&
+                (rx_usecase->out_snd_device == snd_device ||
+                 platform_check_backends_match(rx_usecase->out_snd_device, snd_device));
+    }
+
+    if (match && usecase->type != PCM_CAPTURE) {
+        *sample_rate = us->rx_out.sample_rate;
+        *bit_width = us->rx_out.bit_width;
+    }
+
+    return match;
+}
+
 void us_select_devices_pre(void)
 {
     if (us && us->state == ULTRASOUND_STATUS_STARTED &&
@@ -401,7 +445,7 @@ void us_start(void)
     rx_usecase->type = PCM_PLAYBACK;
     rx_usecase->out_snd_device = us_get_output_snd_device();
     rx_usecase->id = USECASE_AUDIO_ULTRASOUND_RX;
-    rx_usecase->stream.out = us->adev->primary_output;
+    rx_usecase->stream.out = &us->rx_out;
     list_init(&rx_usecase->device_list);
     assign_devices(&rx_usecase->device_list, &us->adev->primary_output->device_list);
     list_add_tail(&us->adev->usecase_list, &rx_usecase->list);
