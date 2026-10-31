@@ -27,6 +27,10 @@
 
 #define ULTRASOUND_CALIBRATION_FILE "/mnt/vendor/persist/audio/us_cal"
 #define ULTRASOUND_CALIBRATION_MIXER "Ultrasound Calibration Data"
+#define ULTRASOUND_CALIBRATION_SIZE 64
+#define ULTRASOUND_CALIBRATION_V2_FILE "/mnt/vendor/persist/audio/us_cal_v2"
+#define ULTRASOUND_CALIBRATION_V2_MIXER "Ultrasound Calibration Ext Data"
+#define ULTRASOUND_CALIBRATION_V2_SIZE 448
 #define ULTRASOUND_RAMPDOWN_MIXER "Ultrasound RampDown"
 #define ULTRASOUND_SUSPEND_MIXER "Ultrasound Suspend"
 #define ULTRASOUND_RX_PORT_MIXER "Ultrasound Rx Port"
@@ -57,36 +61,48 @@ struct ultrasound_device {
 
 static struct ultrasound_device *us = NULL;
 
-static void us_cal_load(void)
+/* Calibration files hold one "0xNN " token per byte */
+static void us_cal_load_file(const char *path, const char *mixer, size_t size)
 {
     FILE *f;
-    char buff[5] = {0}, us_cal[64];
+    char buff[6] = {0};
+    uint8_t us_cal[ULTRASOUND_CALIBRATION_V2_SIZE];
     struct mixer_ctl *ctl;
     int rc;
 
-    f = fopen(ULTRASOUND_CALIBRATION_FILE, "r");
+    f = fopen(path, "r");
     if (!f) {
-        ALOGE("%s: Cannot open calibration file: %s",
-                __func__, ULTRASOUND_CALIBRATION_FILE);
+        ALOGI("%s: No calibration file: %s", __func__, path);
         return;
     }
 
-    for (size_t i = 0; i < sizeof(us_cal); i++) {
-        fread(buff, 1, sizeof(buff), f);
+    for (size_t i = 0; i < size; i++) {
+        if (fread(buff, 1, sizeof(buff) - 1, f) < 4) {
+            ALOGE("%s: Calibration file %s is truncated", __func__, path);
+            fclose(f);
+            return;
+        }
         us_cal[i] = strtol(buff, 0, 16);
     }
     fclose(f);
 
-    ctl = mixer_get_ctl_by_name(us->adev->mixer, ULTRASOUND_CALIBRATION_MIXER);
+    ctl = mixer_get_ctl_by_name(us->adev->mixer, mixer);
     if (!ctl) {
-        ALOGE("%s: Could not get ctl for mixer cmd - %s",
-                __func__, ULTRASOUND_CALIBRATION_MIXER);
+        ALOGE("%s: Could not get ctl for mixer cmd - %s", __func__, mixer);
         return;
     }
 
-    rc = mixer_ctl_set_array(ctl, us_cal, sizeof(us_cal));
+    rc = mixer_ctl_set_array(ctl, us_cal, size);
     if (rc < 0)
-        ALOGE("%s: Could not set ctl, error:%d ", __func__, rc);
+        ALOGE("%s: Could not set %s, error:%d ", __func__, mixer, rc);
+}
+
+static void us_cal_load(void)
+{
+    us_cal_load_file(ULTRASOUND_CALIBRATION_FILE, ULTRASOUND_CALIBRATION_MIXER,
+            ULTRASOUND_CALIBRATION_SIZE);
+    us_cal_load_file(ULTRASOUND_CALIBRATION_V2_FILE, ULTRASOUND_CALIBRATION_V2_MIXER,
+            ULTRASOUND_CALIBRATION_V2_SIZE);
 }
 
 static void us_ramp_down(void)
