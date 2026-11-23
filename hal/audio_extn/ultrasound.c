@@ -403,7 +403,12 @@ void us_start(void)
 
     ALOGD("%s: enter", __func__);
 
-    if (!us || us->state == ULTRASOUND_STATUS_STARTED) {
+    /*
+     * The engine stays suspended with a wired headset anyway, but a started
+     * RX on the headphone backend forces it to 96 kHz/24-bit and re-routes
+     * every stream on it (audible gap) at the next select_devices().
+     */
+    if (!us || us->state == ULTRASOUND_STATUS_STARTED || us->headset_connected) {
         rc = -EPERM;
         goto exit;
     }
