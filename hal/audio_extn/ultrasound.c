@@ -183,6 +183,8 @@ exit:
     ALOGD("%s: exit", __func__);
 }
 
+static void stop_us(void);
+
 void us_init(struct audio_device *adev)
 {
     int rc = 0;
@@ -226,7 +228,8 @@ void us_deinit(void)
     ALOGD("%s: enter", __func__);
 
     if (us) {
-        us_stop();
+        if (us->state == ULTRASOUND_STATUS_STARTED)
+            stop_us();
         clear_devices(&us->rx_out.device_list);
         pthread_mutex_destroy(&us->rx_out.lock);
         pthread_mutex_destroy(&us->rx_out.pre_lock);
@@ -337,10 +340,15 @@ void us_select_rx_device(void)
     if (snd_device == usecase->out_snd_device)
         return;
 
-    disable_audio_route(us->adev, usecase);
-    disable_snd_device(us->adev, usecase->out_snd_device);
-    usecase->out_snd_device = snd_device;
+    if (usecase->out_snd_device != SND_DEVICE_NONE) {
+        disable_audio_route(us->adev, usecase);
+        disable_snd_device(us->adev, usecase->out_snd_device);
+    }
+
+    check_usecases_codec_backend(us->adev, usecase, snd_device);
+
     enable_snd_device(us->adev, snd_device);
+    usecase->out_snd_device = snd_device;
     enable_audio_route(us->adev, usecase);
 }
 
@@ -443,15 +451,13 @@ void us_start(void)
     }
 
     rx_usecase->type = PCM_PLAYBACK;
-    rx_usecase->out_snd_device = us_get_output_snd_device();
     rx_usecase->id = USECASE_AUDIO_ULTRASOUND_RX;
     rx_usecase->stream.out = &us->rx_out;
     list_init(&rx_usecase->device_list);
     assign_devices(&rx_usecase->device_list, &us->adev->primary_output->device_list);
     list_add_tail(&us->adev->usecase_list, &rx_usecase->list);
 
-    enable_snd_device(us->adev, rx_usecase->out_snd_device);
-    enable_audio_route(us->adev, rx_usecase);
+    us_select_rx_device();
     ALOGV("%s: Opening PCM playback device card_id(%d) device_id(%d)",
             __func__, us->adev->snd_card, rx_device_id);
     us->rx_pcm = pcm_open(us->adev->snd_card, rx_device_id, PCM_OUT, &pcm_config_us);
@@ -513,6 +519,8 @@ exit:
 
 void us_stop(void)
 {
+    struct audio_usecase *usecase;
+    struct listnode *node;
     int rc = 0;
 
     ALOGD("%s: enter", __func__);
@@ -523,6 +531,11 @@ void us_stop(void)
     }
 
     stop_us();
+
+    list_for_each(node, &us->adev->usecase_list) {
+        usecase = node_to_item(node, struct audio_usecase, list);
+        select_devices(us->adev, usecase->id);
+    }
 
 exit:
     ALOGD("%s: exit, status(%d)", __func__, rc);

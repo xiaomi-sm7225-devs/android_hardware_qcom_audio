@@ -765,6 +765,9 @@ struct audio_patch_record {
 
 int select_devices(struct audio_device *adev,
                           audio_usecase_t uc_id);
+void check_usecases_codec_backend(struct audio_device *adev,
+                                  struct audio_usecase *uc_info,
+                                  snd_device_t snd_device);
 int disable_audio_route(struct audio_device *adev,
                         struct audio_usecase *usecase);
 int disable_snd_device(struct audio_device *adev,
