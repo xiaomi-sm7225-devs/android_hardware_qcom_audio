@@ -500,7 +500,8 @@ void us_start(void)
         goto exit;
     }
 
-    us_suspend(0);
+    if (!us->headset_connected)
+        us_suspend(0);
 
     us->state = ULTRASOUND_STATUS_STARTED;
 
