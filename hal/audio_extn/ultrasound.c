@@ -19,6 +19,7 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 #include <log/log.h>
 #include "audio_hw.h"
 #include "platform_api.h"
@@ -56,6 +57,7 @@ struct ultrasound_device {
     bool suspended;
     bool headset_connected;
     struct stream_out rx_out;
+    struct stream_in tx_in;
     struct audio_device *adev;
 };
 
@@ -217,6 +219,19 @@ void us_init(struct audio_device *adev)
     us->rx_out.app_type_cfg.sample_rate = pcm_config_us.rate;
     us->rx_out.app_type_cfg.bit_width = 16;
 
+    pthread_mutex_init(&us->tx_in.lock, (const pthread_mutexattr_t *) NULL);
+    pthread_mutex_init(&us->tx_in.pre_lock, (const pthread_mutexattr_t *) NULL);
+    list_init(&us->tx_in.device_list);
+    update_device_list(&us->tx_in.device_list, AUDIO_DEVICE_IN_BUILTIN_MIC, "", true);
+    us->tx_in.dev = adev;
+    us->tx_in.usecase = USECASE_AUDIO_ULTRASOUND_TX;
+    us->tx_in.sample_rate = pcm_config_us.rate;
+    us->tx_in.channel_mask = audio_channel_in_mask_from_count(pcm_config_us.channels);
+    us->tx_in.format = AUDIO_FORMAT_PCM_16_BIT;
+    us->tx_in.bit_width = 16;
+    us->tx_in.app_type_cfg.sample_rate = pcm_config_us.rate;
+    us->tx_in.app_type_cfg.bit_width = 16;
+
     us_cal_load();
 
 exit:
@@ -233,6 +248,9 @@ void us_deinit(void)
         clear_devices(&us->rx_out.device_list);
         pthread_mutex_destroy(&us->rx_out.lock);
         pthread_mutex_destroy(&us->rx_out.pre_lock);
+        clear_devices(&us->tx_in.device_list);
+        pthread_mutex_destroy(&us->tx_in.lock);
+        pthread_mutex_destroy(&us->tx_in.pre_lock);
         free(us);
         us = NULL;
     }
@@ -352,6 +370,74 @@ void us_select_rx_device(void)
     enable_audio_route(us->adev, usecase);
 }
 
+bool is_ultrasound_usecase(struct audio_usecase *usecase)
+{
+    return usecase->id == USECASE_AUDIO_ULTRASOUND_RX ||
+           usecase->id == USECASE_AUDIO_ULTRASOUND_TX;
+}
+
+static bool us_capture_backends_match(snd_device_t device1, snd_device_t device2)
+{
+    const char *itf1, *itf2;
+
+    if (device1 < SND_DEVICE_IN_BEGIN || device1 >= SND_DEVICE_IN_END ||
+        device2 < SND_DEVICE_IN_BEGIN || device2 >= SND_DEVICE_IN_END)
+        return false;
+
+    itf1 = platform_get_snd_device_backend_interface(device1);
+    itf2 = platform_get_snd_device_backend_interface(device2);
+
+    if (!itf1 || !itf2)
+        return !itf1 && !itf2;
+
+    return strstr(itf2, itf1) || strstr(itf1, itf2);
+}
+
+static snd_device_t us_get_input_snd_device(void)
+{
+    snd_device_t snd_device = SND_DEVICE_IN_ULTRASOUND;
+    struct audio_usecase *usecase;
+    struct listnode *node;
+
+    list_for_each(node, &us->adev->usecase_list) {
+        usecase = node_to_item(node, struct audio_usecase, list);
+        if (usecase->type == PCM_PLAYBACK)
+            continue;
+        if (us_capture_backends_match(snd_device, usecase->in_snd_device))
+            snd_device = usecase->in_snd_device;
+    }
+
+    return snd_device;
+}
+
+void us_select_tx_device(void)
+{
+    struct audio_usecase *usecase;
+    snd_device_t snd_device;
+
+    if (!us)
+        return;
+
+    usecase = get_usecase_from_list(us->adev, USECASE_AUDIO_ULTRASOUND_TX);
+    if (!usecase)
+        return;
+
+    snd_device = us_get_input_snd_device();
+    if (snd_device == usecase->in_snd_device)
+        return;
+
+    if (usecase->in_snd_device != SND_DEVICE_NONE) {
+        disable_audio_route(us->adev, usecase);
+        disable_snd_device(us->adev, usecase->in_snd_device);
+    }
+
+    platform_check_and_set_capture_codec_backend_cfg(us->adev, usecase, snd_device);
+
+    enable_snd_device(us->adev, snd_device);
+    usecase->in_snd_device = snd_device;
+    enable_audio_route(us->adev, usecase);
+}
+
 void us_set_device_connection(audio_devices_t device, bool connected)
 {
     if (!us)
@@ -362,8 +448,10 @@ void us_set_device_connection(audio_devices_t device, bool connected)
     else if (connected)
         return;
 
-    if (us->state == ULTRASOUND_STATUS_STARTED)
+    if (us->state == ULTRASOUND_STATUS_STARTED) {
         us_select_rx_device();
+        us_select_tx_device();
+    }
 }
 
 bool us_check_and_set_codec_backend_cfg(struct audio_usecase *usecase,
@@ -419,6 +507,8 @@ void us_start(void)
         goto exit;
     }
 
+    us->state = ULTRASOUND_STATUS_STARTED;
+
     ALOGD("%s: enter usecase: ultrasound", __func__);
     rx_device_id = platform_get_pcm_device_id(USECASE_AUDIO_ULTRASOUND_RX, PCM_PLAYBACK);
     tx_device_id = platform_get_pcm_device_id(USECASE_AUDIO_ULTRASOUND_TX, PCM_CAPTURE);
@@ -442,6 +532,37 @@ void us_start(void)
     }
 
     us_suspend(1);
+
+    tx_usecase = calloc(1, sizeof(struct audio_usecase));
+    if (!tx_usecase) {
+        ALOGE("%s: Out of memory!", __func__);
+        rc = -ENOMEM;
+        goto exit;
+    }
+
+    tx_usecase->type = PCM_CAPTURE;
+    tx_usecase->id = USECASE_AUDIO_ULTRASOUND_TX;
+    tx_usecase->stream.in = &us->tx_in;
+    list_init(&tx_usecase->device_list);
+    reassign_device_list(&tx_usecase->device_list, AUDIO_DEVICE_IN_BUILTIN_MIC, "");
+    list_add_tail(&us->adev->usecase_list, &tx_usecase->list);
+
+    us_select_tx_device();
+    ALOGV("%s: Opening PCM capture device card_id(%d) device_id(%d)",
+            __func__, us->adev->snd_card, tx_device_id);
+    us->tx_pcm = pcm_open(us->adev->snd_card, tx_device_id, PCM_IN, &pcm_config_us);
+    if (us->tx_pcm && !pcm_is_ready(us->tx_pcm)) {
+        ALOGE("%s: %s", __func__, pcm_get_error(us->tx_pcm));
+        rc = -EIO;
+        goto exit;
+    }
+
+    if (pcm_start(us->tx_pcm) < 0) {
+        ALOGE("%s: pcm start for TX failed; error = %s", __func__,
+              pcm_get_error(us->tx_pcm));
+        rc = -EINVAL;
+        goto exit;
+    }
 
     rx_usecase = calloc(1, sizeof(struct audio_usecase));
     if (!rx_usecase) {
@@ -467,38 +588,6 @@ void us_start(void)
         goto exit;
     }
 
-    tx_usecase = calloc(1, sizeof(struct audio_usecase));
-    if (!tx_usecase) {
-        ALOGE("%s: Out of memory!", __func__);
-        rc = -ENOMEM;
-        goto exit;
-    }
-
-    tx_usecase->type = PCM_CAPTURE;
-    tx_usecase->in_snd_device = SND_DEVICE_IN_ULTRASOUND;
-    tx_usecase->id = USECASE_AUDIO_ULTRASOUND_TX;
-    list_init(&tx_usecase->device_list);
-    reassign_device_list(&tx_usecase->device_list, AUDIO_DEVICE_IN_BUILTIN_MIC, "");
-    list_add_tail(&us->adev->usecase_list, &tx_usecase->list);
-
-    enable_snd_device(us->adev, SND_DEVICE_IN_ULTRASOUND);
-    enable_audio_route(us->adev, tx_usecase);
-    ALOGV("%s: Opening PCM capture device card_id(%d) device_id(%d)",
-            __func__, us->adev->snd_card, tx_device_id);
-    us->tx_pcm = pcm_open(us->adev->snd_card, tx_device_id, PCM_IN, &pcm_config_us);
-    if (us->tx_pcm && !pcm_is_ready(us->tx_pcm)) {
-        ALOGE("%s: %s", __func__, pcm_get_error(us->tx_pcm));
-        rc = -EIO;
-        goto exit;
-    }
-
-    if (pcm_start(us->tx_pcm) < 0) {
-        ALOGE("%s: pcm start for TX failed; error = %s", __func__,
-              pcm_get_error(us->tx_pcm));
-        rc = -EINVAL;
-        goto exit;
-    }
-
     if (pcm_start(us->rx_pcm) < 0) {
         ALOGE("%s: pcm start for RX failed; error = %s", __func__,
               pcm_get_error(us->rx_pcm));
@@ -508,8 +597,6 @@ void us_start(void)
 
     if (!us->headset_connected)
         us_suspend(0);
-
-    us->state = ULTRASOUND_STATUS_STARTED;
 
 exit:
     ALOGD("%s: exit, status(%d)", __func__, rc);

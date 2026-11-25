@@ -2598,7 +2598,8 @@ struct stream_in *adev_get_active_input(const struct audio_device *adev)
     list_for_each(node, &adev->usecase_list)
     {
         struct audio_usecase *usecase = node_to_item(node, struct audio_usecase, list);
-        if (usecase->type == PCM_CAPTURE && usecase->stream.in != NULL)
+        if (usecase->type == PCM_CAPTURE && usecase->stream.in != NULL &&
+            !is_ultrasound_usecase(usecase))
             last_active_in =  usecase->stream.in;
     }
 
@@ -2615,6 +2616,7 @@ struct stream_in *get_voice_communication_input(const struct audio_device *adev)
     {
         struct audio_usecase *usecase = node_to_item(node, struct audio_usecase, list);
         if (usecase->type == PCM_CAPTURE && usecase->stream.in != NULL &&
+            !is_ultrasound_usecase(usecase) &&
             usecase->stream.in->source == AUDIO_SOURCE_VOICE_COMMUNICATION)
             return usecase->stream.in;
     }
@@ -2666,7 +2668,7 @@ static struct stream_in *get_priority_input(struct audio_device *adev)
         usecase = node_to_item(node, struct audio_usecase, list);
         if (usecase->type == PCM_CAPTURE) {
             in = usecase->stream.in;
-            if (!in)
+            if (!in || is_ultrasound_usecase(usecase))
                 continue;
             priority = source_priority(in->source);
 
@@ -2700,11 +2702,12 @@ int select_devices(struct audio_device *adev, audio_usecase_t uc_id)
     }
 
 #ifdef ELLIPTIC_ULTRASOUND_ENABLED
-    if (usecase->id == USECASE_AUDIO_ULTRASOUND_RX ||
-        usecase->id == USECASE_AUDIO_ULTRASOUND_TX) {
+    if (is_ultrasound_usecase(usecase)) {
         ALOGD("%s: Ultrasound usecase(%d)", __func__, uc_id);
         if (usecase->id == USECASE_AUDIO_ULTRASOUND_RX)
             us_select_rx_device();
+        else
+            us_select_tx_device();
         return 0;
     }
 #endif

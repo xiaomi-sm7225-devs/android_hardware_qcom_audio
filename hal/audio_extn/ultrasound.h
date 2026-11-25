@@ -25,6 +25,8 @@
 #define us_stop() (0)
 #define us_suspend(val) (0)
 #define us_select_rx_device() (0)
+#define us_select_tx_device() (0)
+#define is_ultrasound_usecase(usecase) (false)
 #define us_set_device_connection(device, connected) (0)
 #define us_select_devices_pre() (0)
 #define us_select_devices_post() (0)
@@ -35,6 +37,8 @@ void us_start(void);
 void us_stop(void);
 void us_suspend(int val);
 void us_select_rx_device(void);
+void us_select_tx_device(void);
+bool is_ultrasound_usecase(struct audio_usecase *usecase);
 void us_set_device_connection(audio_devices_t device, bool connected);
 bool us_check_and_set_codec_backend_cfg(struct audio_usecase *usecase,
                                         snd_device_t snd_device,
